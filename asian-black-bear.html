@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ツキノワグマ 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0d0f;
+    overflow: hidden;
+    font-family: 'Georgia', serif;
+  }
+  canvas { display: block; }
+  #ui {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    z-index: 10;
+  }
+  .btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.85);
+    padding: 8px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    backdrop-filter: blur(10px);
+    transition: all 0.2s;
+  }
+  .btn:hover { background: rgba(255,255,255,0.18); }
+  #title {
+    position: fixed;
+    top: 28px;
+    left: 36px;
+    color: rgba(255,255,255,0.7);
+    font-size: 22px;
+    letter-spacing: 0.12em;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.8);
+  }
+  #subtitle {
+    position: fixed;
+    top: 58px;
+    left: 36px;
+    color: rgba(255,255,255,0.35);
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  #hint {
+    position: fixed;
+    top: 28px;
+    right: 36px;
+    color: rgba(255,255,255,0.3);
+    font-size: 12px;
+    text-align: right;
+    line-height: 1.8;
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+<div id="title">ツキノワグマ</div>
+<div id="subtitle">Asiatic Black Bear · Ursus thibetanus</div>
+<div id="hint">ドラッグ: 回転<br>スクロール: ズーム</div>
+<div id="ui">
+  <button class="btn" onclick="setAnim('idle')">待機</button>
+  <button class="btn" onclick="setAnim('walk')">歩く</button>
+  <button class="btn" onclick="setAnim('sit')">座る</button>
+  <button class="btn" onclick="setAnim('sniff')">嗅ぐ</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ===== SCENE SETUP =====
+const scene = new THREE.Scene();
+const W = window.innerWidth, H = window.innerHeight;
+const camera = new THREE.PerspectiveCamera(42, W/H, 0.1, 200);
+camera.position.set(0, 1.8, 6.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+// ===== FOG & BACKGROUND =====
+scene.fog = new THREE.FogExp2(0x0a0d0f, 0.045);
+scene.background = new THREE.Color(0x0a0d0f);
+
+// ===== LIGHTING =====
+const ambient = new THREE.AmbientLight(0x1a2535, 1.2);
+scene.add(ambient);
+
+// Key light - warm sunlight from upper right
+const keyLight = new THREE.DirectionalLight(0xffe8c0, 3.5);
+keyLight.position.set(4, 8, 3);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 0.5;
+keyLight.shadow.camera.far = 30;
+keyLight.shadow.camera.left = -6;
+keyLight.shadow.camera.right = 6;
+keyLight.shadow.camera.top = 6;
+keyLight.shadow.camera.bottom = -6;
+keyLight.shadow.bias = -0.001;
+scene.add(keyLight);
+
+// Fill light - cool blue from left
+const fillLight = new THREE.DirectionalLight(0x8ab4e8, 0.8);
+fillLight.position.set(-5, 3, 2);
+scene.add(fillLight);
+
+// Rim light - back highlight
+const rimLight = new THREE.DirectionalLight(0xffd090, 1.2);
+rimLight.position.set(-1, 4, -6);
+scene.add(rimLight);
+
+// Ground bounce
+const bounceLight = new THREE.PointLight(0x4a5c38, 0.6, 8);
+bounceLight.position.set(0, -0.3, 0);
+scene.add(bounceLight);
+
+// ===== MATERIALS =====
+// Deep black fur with subsurface-ish sheen
+const blackFur = new THREE.MeshStandardMaterial({
+  color: 0x080808,
+  roughness: 0.92,
+  metalness: 0.0,
+  envMapIntensity: 0.3,
+});
+// Slightly lighter black for body variation
+const darkFur = new THREE.MeshStandardMaterial({
+  color: 0x111010,
+  roughness: 0.88,
+  metalness: 0.0,
+});
+// Cream/white chest crescent mark
+const crescentMark = new THREE.MeshStandardMaterial({
+  color: 0xf5e8c0,
+  roughness: 0.85,
+  metalness: 0.0,
+});
+// Muzzle - brownish lighter
+const muzzleMat = new THREE.MeshStandardMaterial({
+  color: 0x2a1a0e,
+  roughness: 0.9,
+  metalness: 0.0,
+});
+// Nose
+const noseMat = new THREE.MeshStandardMaterial({
+  color: 0x1a0f0a,
+  roughness: 0.5,
+  metalness: 0.05,
+});
+// Eyes - dark brown with gloss
+const eyeMat = new THREE.MeshStandardMaterial({
+  color: 0x1a0a02,
+  roughness: 0.1,
+  metalness: 0.3,
+  emissive: 0x050201,
+  emissiveIntensity: 0.5,
+});
+const eyeShine = new THREE.MeshStandardMaterial({
+  color: 0xffffff,
+  roughness: 0.05,
+  metalness: 0.1,
+  emissive: 0xffffff,
+  emissiveIntensity: 0.8,
+});
+// Claws
+const clawMat = new THREE.MeshStandardMaterial({
+  color: 0x1a1510,
+  roughness: 0.4,
+  metalness: 0.1,
+});
+
+// ===== BEAR GROUP =====
+const bear = new THREE.Group();
+scene.add(bear);
+
+function addSphere(parent, mat, rx, ry, rz, px, py, pz, sx=1, sy=1, sz=1) {
+  const g = new THREE.SphereGeometry(1, 20, 16);
+  const m = new THREE.Mesh(g, mat);
+  m.rotation.set(rx, ry, rz);
+  m.position.set(px, py, pz);
+  m.scale.set(sx, sy, sz);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function addBox(parent, mat, w, h, d, px, py, pz, rx=0, ry=0, rz=0) {
+  const g = new THREE.BoxGeometry(w, h, d, 3, 3, 3);
+  const m = new THREE.Mesh(g, mat);
+  m.position.set(px, py, pz);
+  m.rotation.set(rx, ry, rz);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function addCylinder(parent, mat, rt, rb, h, px, py, pz, rx=0, ry=0, rz=0) {
+  const g = new THREE.CylinderGeometry(rt, rb, h, 12, 3);
+  const m = new THREE.Mesh(g, mat);
+  m.position.set(px, py, pz);
+  m.rotation.set(rx, ry, rz);
+  m.castShadow = true;
+  parent.add(m);
+  return m;
+}
+
+// ===== BODY =====
+const bodyGroup = new THREE.Group();
+bear.add(bodyGroup);
+
+// Main torso - large and stocky
+const torso = addSphere(bodyGroup, blackFur, 0,0,0, 0, 0, 0, 1.05, 0.88, 0.95);
+// Belly extension
+addSphere(bodyGroup, darkFur, 0,0,0, 0, -0.22, 0.15, 0.72, 0.62, 0.72);
+// Rump
+addSphere(bodyGroup, blackFur, 0,0,0, -0.7, 0.1, -0.4, 0.72, 0.7, 0.72);
+// Shoulder hump
+addSphere(bodyGroup, blackFur, 0,0,0, 0, 0.55, -0.2, 0.7, 0.55, 0.65);
+
+// ===== CHEST CRESCENT (V-mark) =====
+const chestGroup = new THREE.Group();
+bodyGroup.add(chestGroup);
+chestGroup.position.set(0, 0.18, 0.88);
+// Main crescent shape using overlapping spheres
+addSphere(chestGroup, crescentMark, 0,0,0, 0, 0, 0, 0.42, 0.22, 0.08);
+addSphere(chestGroup, crescentMark, 0,0,0, -0.22, -0.12, 0, 0.22, 0.28, 0.08);
+addSphere(chestGroup, crescentMark, 0,0,0,  0.22, -0.12, 0, 0.22, 0.28, 0.08);
+addSphere(chestGroup, crescentMark, 0,0,0, -0.38, -0.32, 0, 0.12, 0.22, 0.07);
+addSphere(chestGroup, crescentMark, 0,0,0,  0.38, -0.32, 0, 0.12, 0.22, 0.07);
+
+// ===== NECK =====
+const neckGroup = new THREE.Group();
+bodyGroup.add(neckGroup);
+neckGroup.position.set(0, 0.55, 0.68);
+neckGroup.rotation.x = -0.35;
+addSphere(neckGroup, blackFur, 0,0,0, 0, 0, 0, 0.5, 0.52, 0.5);
+
+// ===== HEAD =====
+const headGroup = new THREE.Group();
+bear.add(headGroup);
+headGroup.position.set(0, 1.32, 0.95);
+
+// Skull - round and wide
+addSphere(headGroup, blackFur, 0,0,0, 0, 0.06, 0, 0.56, 0.52, 0.52);
+// Wider cheeks
+addSphere(headGroup, blackFur, 0,0,0, -0.45, -0.04, 0.05, 0.28, 0.26, 0.28);
+addSphere(headGroup, blackFur, 0,0,0,  0.45, -0.04, 0.05, 0.28, 0.26, 0.28);
+// Forehead
+addSphere(headGroup, blackFur, 0,0,0, 0, 0.3, 0.1, 0.38, 0.28, 0.35);
+
+// Muzzle - protruding
+const muzzleGroup = new THREE.Group();
+headGroup.add(muzzleGroup);
+muzzleGroup.position.set(0, -0.08, 0.44);
+addSphere(muzzleGroup, muzzleMat, 0,0,0, 0, 0, 0, 0.3, 0.22, 0.28);
+addSphere(muzzleGroup, muzzleMat, 0,0,0, -0.12, 0.04, 0.04, 0.18, 0.16, 0.18);
+addSphere(muzzleGroup, muzzleMat, 0,0,0,  0.12, 0.04, 0.04, 0.18, 0.16, 0.18);
+// Nose pad
+addSphere(muzzleGroup, noseMat, 0,0,0, 0, 0.1, 0.2, 0.14, 0.09, 0.1);
+// Lip line
+addSphere(muzzleGroup, muzzleMat, 0,0,0, 0, -0.08, 0.2, 0.1, 0.06, 0.08);
+
+// Eyes
+const eyeOffY = 0.12, eyeOffZ = 0.32, eyeOffX = 0.2;
+[-1,1].forEach(side => {
+  const eyeBase = addSphere(headGroup, eyeMat, 0,0,0, side*eyeOffX, eyeOffY, eyeOffZ, 0.115, 0.115, 0.09);
+  addSphere(headGroup, eyeShine, 0,0,0, side*(eyeOffX+0.04), eyeOffY+0.04, eyeOffZ+0.03, 0.032, 0.032, 0.025);
+  // Brow ridge
+  addSphere(headGroup, blackFur, 0,0,0, side*(eyeOffX+0.02), eyeOffY+0.09, eyeOffZ-0.04, 0.18, 0.09, 0.12);
+});
+
+// Ears - rounded and small
+[-1,1].forEach(side => {
+  const earGroup = new THREE.Group();
+  headGroup.add(earGroup);
+  earGroup.position.set(side*0.38, 0.38, -0.08);
+  earGroup.rotation.z = side*0.2;
+  addSphere(earGroup, blackFur, 0,0,0, 0, 0, 0, 0.18, 0.2, 0.12);
+  addSphere(earGroup, darkFur, 0,0,0, 0, 0, 0.04, 0.12, 0.14, 0.07);
+});
+
+// ===== LEGS =====
+// Front legs
+const frontLegL = new THREE.Group();
+const frontLegR = new THREE.Group();
+bear.add(frontLegL);
+bear.add(frontLegR);
+
+function buildFrontLeg(group, side) {
+  // Upper leg (arm)
+  const upper = new THREE.Group();
+  group.add(upper);
+  upper.position.set(side*0.72, 0.32, 0.6);
+  upper.rotation.z = side*0.18;
+  addSphere(upper, blackFur, 0,0,0, 0, 0, 0, 0.3, 0.38, 0.3);
+  addCylinder(upper, blackFur, 0.24, 0.28, 0.55, 0, -0.38, 0, 0,0,0);
+
+  // Lower leg
+  const lower = new THREE.Group();
+  upper.add(lower);
+  lower.position.set(0, -0.72, 0.08);
+  lower.rotation.x = 0.15;
+  addCylinder(lower, darkFur, 0.18, 0.22, 0.45, 0, -0.2, 0);
+
+  // Paw
+  const paw = new THREE.Group();
+  lower.add(paw);
+  paw.position.set(0, -0.48, 0.05);
+  addSphere(paw, blackFur, 0,0,0, 0, 0, 0, 0.26, 0.18, 0.3);
+  // Toes
+  for(let i=-1; i<=1; i+=0.5) {
+    addSphere(paw, blackFur, 0,0,0, i*0.08, 0, 0.22, 0.09, 0.07, 0.09);
+  }
+  // Claws
+  for(let i=-1; i<=1; i+=0.5) {
+    addSphere(paw, clawMat, 0,0,0, i*0.08, -0.04, 0.3, 0.04, 0.03, 0.07);
+  }
+  return upper;
+}
+
+const fUpperL = buildFrontLeg(frontLegL, -1);
+const fUpperR = buildFrontLeg(frontLegR,  1);
+
+// Back legs
+const backLegL = new THREE.Group();
+const backLegR = new THREE.Group();
+bear.add(backLegL);
+bear.add(backLegR);
+
+function buildBackLeg(group, side) {
+  const hip = new THREE.Group();
+  group.add(hip);
+  hip.position.set(side*0.62, 0.05, -0.62);
+  hip.rotation.z = side*0.12;
+
+  addSphere(hip, blackFur, 0,0,0, 0, 0, 0, 0.32, 0.36, 0.32);
+  addCylinder(hip, blackFur, 0.26, 0.3, 0.52, 0, -0.38, 0);
+
+  const knee = new THREE.Group();
+  hip.add(knee);
+  knee.position.set(0, -0.72, 0.1);
+  knee.rotation.x = -0.2;
+  addCylinder(knee, darkFur, 0.2, 0.25, 0.42, 0, -0.22, 0);
+
+  const paw = new THREE.Group();
+  knee.add(paw);
+  paw.position.set(0, -0.5, 0.08);
+  paw.rotation.x = 0.3;
+  addSphere(paw, blackFur, 0,0,0, 0, 0, 0, 0.28, 0.18, 0.34);
+  for(let i=-1; i<=1; i+=0.5) {
+    addSphere(paw, blackFur, 0,0,0, i*0.08, 0, 0.24, 0.09, 0.07, 0.09);
+    addSphere(paw, clawMat, 0,0,0, i*0.08, -0.04, 0.32, 0.04, 0.03, 0.08);
+  }
+  return hip;
+}
+
+const bHipL = buildBackLeg(backLegL, -1);
+const bHipR = buildBackLeg(backLegR,  1);
+
+// ===== TAIL (vestigial) =====
+addSphere(bodyGroup, blackFur, 0,0,0, 0, -0.08, -0.9, 0.12, 0.1, 0.14);
+
+// ===== GROUND =====
+const groundGeo = new THREE.PlaneGeometry(30, 30, 1, 1);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x1a1f18,
+  roughness: 0.95,
+  metalness: 0.0,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -0.95;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Center bear
+bear.position.y = -0.05;
+
+// ===== ORBIT CONTROLS (manual) =====
+let isDragging = false, prevX = 0, prevY = 0;
+let rotY = 0.3, rotX = -0.08, zoom = 6.5;
+
+renderer.domElement.addEventListener('mousedown', e => { isDragging = true; prevX = e.clientX; prevY = e.clientY; });
+renderer.domElement.addEventListener('touchstart', e => { isDragging = true; prevX = e.touches[0].clientX; prevY = e.touches[0].clientY; });
+window.addEventListener('mouseup', () => isDragging = false);
+window.addEventListener('touchend', () => isDragging = false);
+window.addEventListener('mousemove', e => {
+  if(!isDragging) return;
+  rotY += (e.clientX - prevX) * 0.008;
+  rotX += (e.clientY - prevY) * 0.006;
+  rotX = Math.max(-0.6, Math.min(0.5, rotX));
+  prevX = e.clientX; prevY = e.clientY;
+});
+window.addEventListener('touchmove', e => {
+  if(!isDragging) return;
+  rotY += (e.touches[0].clientX - prevX) * 0.008;
+  rotX += (e.touches[0].clientY - prevY) * 0.006;
+  rotX = Math.max(-0.6, Math.min(0.5, rotX));
+  prevX = e.touches[0].clientX; prevY = e.touches[0].clientY;
+});
+window.addEventListener('wheel', e => {
+  zoom += e.deltaY * 0.01;
+  zoom = Math.max(3, Math.min(12, zoom));
+});
+
+// ===== ANIMATION =====
+let currentAnim = 'idle';
+let animTime = 0;
+window.setAnim = (a) => { currentAnim = a; animTime = 0; };
+
+function animateBear(t) {
+  const speed = currentAnim === 'walk' ? 1.8 : 0.9;
+  animTime += 0.016 * speed;
+  const s = Math.sin(animTime), c = Math.cos(animTime);
+  const s2 = Math.sin(animTime*2);
+
+  // Reset
+  headGroup.rotation.set(0,0,0);
+  headGroup.position.set(0, 1.32, 0.95);
+  bodyGroup.rotation.set(0,0,0);
+  frontLegL.rotation.set(0,0,0);
+  frontLegR.rotation.set(0,0,0);
+  backLegL.rotation.set(0,0,0);
+  backLegR.rotation.set(0,0,0);
+
+  if(currentAnim === 'idle') {
+    // Gentle breathing
+    const breath = Math.sin(animTime*0.7)*0.025;
+    bodyGroup.scale.set(1, 1+breath, 1);
+    headGroup.rotation.y = s*0.04;
+    headGroup.position.y = 1.32 + s*0.01;
+    headGroup.rotation.x = Math.sin(animTime*0.5)*0.04;
+  }
+  else if(currentAnim === 'walk') {
+    // Walking gait
+    bodyGroup.rotation.z = s2*0.025;
+    bodyGroup.position.y = Math.abs(s2)*0.04 - 0.02;
+    frontLegL.rotation.x = s*0.55;
+    frontLegR.rotation.x = -s*0.55;
+    backLegL.rotation.x = -s*0.52;
+    backLegR.rotation.x = s*0.52;
+    headGroup.position.y = 1.32 + Math.abs(s2)*0.04;
+    headGroup.rotation.y = s2*0.04;
+  }
+  else if(currentAnim === 'sit') {
+    // Sitting pose - gradual
+    const sit = Math.min(animTime/1.5, 1);
+    backLegL.rotation.x = sit * (-1.1);
+    backLegR.rotation.x = sit * (-1.1);
+    bodyGroup.rotation.x = sit * 0.3;
+    bodyGroup.position.y = sit * -0.35;
+    headGroup.rotation.y = s*0.05*0.3;
+    headGroup.position.y = 1.32 - sit*0.3;
+  }
+  else if(currentAnim === 'sniff') {
+    // Head down sniffing
+    headGroup.rotation.x = 0.45 + s*0.12;
+    headGroup.position.y = 1.32 - 0.25 + s*0.04;
+    headGroup.position.z = 0.95 + s*0.06;
+    headGroup.rotation.y = s*0.08;
+    frontLegL.rotation.x = s*0.08;
+    frontLegR.rotation.x = -s*0.06;
+  }
+}
+
+// ===== RENDER LOOP =====
+let time = 0;
+function render() {
+  requestAnimationFrame(render);
+  time += 0.016;
+  animateBear(time);
+
+  // Camera orbit
+  const cx = Math.sin(rotY)*zoom;
+  const cz = Math.cos(rotY)*zoom;
+  const cy = zoom*0.22 + rotX*zoom + 1.0;
+  camera.position.set(cx, cy, cz);
+  camera.lookAt(0, 0.8, 0);
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  const W = window.innerWidth, H = window.innerHeight;
+  camera.aspect = W/H;
+  camera.updateProjectionMatrix();
+  renderer.setSize(W, H);
+});
+
+render();
+</script>
+</body>
+</html>
